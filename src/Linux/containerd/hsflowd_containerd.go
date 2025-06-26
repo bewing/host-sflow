@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"math/rand"
 	"os"
@@ -18,19 +19,18 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"fmt"
-)
 
-import (
 	v1 "github.com/containerd/cgroups/stats/v1"
+
 	v2 "github.com/containerd/cgroups/v2/stats"
 	"github.com/containerd/containerd"
+
 	apievents "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/namespaces"
+
 	_ "github.com/containerd/containerd/runtime"
-	"github.com/containerd/typeurl"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/containerd/typeurl/v2"
 )
 
 type VirDomainState uint32
@@ -154,7 +154,7 @@ func main() {
 		c_countdown:  0,
 		c_pollM:      0,
 		c_pollC:      0,
- 	        c_apiEvt:     0,
+		c_apiEvt:     0,
 		c_pollL:      0,
 	}
 
@@ -256,26 +256,22 @@ func (cm *CMonitor) loadContainer(nsctx context.Context, nsname string, cont con
 		cm.log(2, "task status = ", tstatus)
 		// info has stuff like env, mountpoints and capabilities
 		// (might need it for, e.g. NVIDIA GPU assignments)
-		v, err := typeurl.UnmarshalAny(info.Spec)
+		sp, err := cont.Spec(nsctx)
 		if err != nil {
 			return err
 		}
 		sfc.Metrics.Names.Image = info.Image
-		switch v.(type) {
-		case *specs.Spec:
-			sp := v.(*specs.Spec)
-			sfc.Metrics.Names.Hostname = sp.Hostname
-			sfc.Metrics.Names.CgroupsPath = sp.Linux.CgroupsPath
-			sfc.Metrics.Names.ContainerName = sp.Annotations["io.kubernetes.cri.container-name"]
-			sfc.Metrics.Names.ContainerType = sp.Annotations["io.kubernetes.cri.container-type"]
-			sfc.Metrics.Names.SandboxName = sp.Annotations["io.kubernetes.cri.sandbox-name"]
-			sfc.Metrics.Names.SandboxNamespace = sp.Annotations["io.kubernetes.cri.sandbox-namespace"]
-			sfc.Metrics.Names.ImageName = sp.Annotations["io.kubernetes.cri.image-name"]
-			sfc.Env = sp.Process.Env
-		}
+		sfc.Metrics.Names.Hostname = sp.Hostname
+		sfc.Metrics.Names.CgroupsPath = sp.Linux.CgroupsPath
+		sfc.Metrics.Names.ContainerName = sp.Annotations["io.kubernetes.cri.container-name"]
+		sfc.Metrics.Names.ContainerType = sp.Annotations["io.kubernetes.cri.container-type"]
+		sfc.Metrics.Names.SandboxName = sp.Annotations["io.kubernetes.cri.sandbox-name"]
+		sfc.Metrics.Names.SandboxNamespace = sp.Annotations["io.kubernetes.cri.sandbox-namespace"]
+		sfc.Metrics.Names.ImageName = sp.Annotations["io.kubernetes.cri.image-name"]
+		sfc.Env = sp.Process.Env
 
 		if cm.dbg >= 2 {
-			mjson, err := json.MarshalIndent(v, "", "  ")
+			mjson, err := json.MarshalIndent(sp, "", "  ")
 			if err != nil {
 				return err
 			}
@@ -344,13 +340,12 @@ func (cm *CMonitor) pollMetrics(ctx context.Context, client *containerd.Client, 
 	if err != nil {
 		return err
 	}
+	var data *v1.Metrics
+	var data2 *v2.Metrics
 	mdata, err := typeurl.UnmarshalAny(metrics.Data)
 	if err != nil {
 		return err
 	}
-
-	var data *v1.Metrics
-	var data2 *v2.Metrics
 
 	switch v := mdata.(type) {
 	case *v1.Metrics:
@@ -432,7 +427,7 @@ func (cm *CMonitor) pollMetrics(ctx context.Context, client *containerd.Client, 
 
 func (cm *CMonitor) metricTick(ctx context.Context, client *containerd.Client) error {
 	cm.c_countdown--
-	if(cm.c_countdown <= 0) {
+	if cm.c_countdown <= 0 {
 		// adopt same polling interval for my own debug counters
 		cm.c_countdown = cm.polling
 		cm.ctrLog("gauge32 ncontainers ", len(cm.sfcontainers))
@@ -639,4 +634,9 @@ func (cm *CMonitor) monitorContainers(ctx context.Context) error {
 			ttick = time.Now()
 		}
 	}
+}
+
+func init() {
+	typeurl.Register(&v1.Metrics{}, "io.containerd.cgroups.v1.Metrics")
+	typeurl.Register(&v2.Metrics{}, "io.containerd.cgroups.v2.Metrics")
 }
