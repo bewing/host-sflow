@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"math/rand"
 	"os"
@@ -18,18 +19,19 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"fmt"
-)
 
-import (
 	v1 "github.com/containerd/cgroups/stats/v1"
+
 	v2 "github.com/containerd/cgroups/v2/stats"
 	"github.com/containerd/containerd"
+
 	apievents "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/namespaces"
+
 	_ "github.com/containerd/containerd/runtime"
 	"github.com/containerd/typeurl"
+
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -154,7 +156,7 @@ func main() {
 		c_countdown:  0,
 		c_pollM:      0,
 		c_pollC:      0,
- 	        c_apiEvt:     0,
+		c_apiEvt:     0,
 		c_pollL:      0,
 	}
 
@@ -342,6 +344,14 @@ func (cm *CMonitor) pollMetrics(ctx context.Context, client *containerd.Client, 
 
 	metrics, err := task.Metrics(myctx)
 	if err != nil {
+		if err.Error() == "no metrics received" {
+			mjson, err := json.Marshal(sfc)
+			if err != nil {
+				return err
+			}
+			cm.dataLog(string(mjson))
+			return nil
+		}
 		return err
 	}
 	mdata, err := typeurl.UnmarshalAny(metrics.Data)
@@ -432,7 +442,7 @@ func (cm *CMonitor) pollMetrics(ctx context.Context, client *containerd.Client, 
 
 func (cm *CMonitor) metricTick(ctx context.Context, client *containerd.Client) error {
 	cm.c_countdown--
-	if(cm.c_countdown <= 0) {
+	if cm.c_countdown <= 0 {
 		// adopt same polling interval for my own debug counters
 		cm.c_countdown = cm.polling
 		cm.ctrLog("gauge32 ncontainers ", len(cm.sfcontainers))
